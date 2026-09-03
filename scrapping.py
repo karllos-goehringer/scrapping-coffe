@@ -9,6 +9,8 @@ import os
 from dotenv import load_dotenv
 import certifi
 import math
+import logging
+from apscheduler.schedulers.background import BackgroundScheduler
 
 load_dotenv(override=True)
 app = FastAPI(title="API Cotações de Café Integrada")
@@ -17,6 +19,8 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo-db:27017/")
 cliente_mongo = MongoClient(MONGO_URI)
 db = cliente_mongo["cafe_db"]
 colecao = db["historico_cotacoes"]
+scheduler = BackgroundScheduler(timezone="UTC")
+logger = logging.getLogger(__name__)
 
 
 def _serializar_documento(documento):
@@ -155,6 +159,34 @@ def _coletar_cotacoes_do_sites():
     return resposta
 
 
+def _coletar_e_salvar_cotacoes():
+    resposta = _coletar_cotacoes_do_sites()
+    resultado_insert = colecao.insert_one(resposta)
+    logger.info("Cotações coletadas e salvas. ID: %s", resultado_insert.inserted_id)
+
+
+@app.on_event("startup")
+def iniciar_coleta_agendada():
+    scheduler.add_job(
+        _coletar_e_salvar_cotacoes,
+        trigger="interval",
+        minutes=30,
+        id="coleta-cotacoes",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+    scheduler.start()
+    logger.info("Coleta automática agendada para executar a cada 30 minutos.")
+
+
+@app.on_event("shutdown")
+def encerrar_coleta_agendada():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+
+
 @app.get("/index")
 def index_response():
     return {"response": "online"}
@@ -180,6 +212,32 @@ def obter_cotacoes():
         }
 
     return _serializar_documento(ultimo_registro)
+
+
+@app.delete("/historico/limpar")
+def limpar_historico_mes(
+    mes: int = Query(..., ge=1, le=12),
+    ano: int = Query(..., ge=2000, le=2100),
+):
+    inicio_mes = datetime(ano, mes, 1, tzinfo=timezone.utc)
+    if mes == 12:
+        inicio_proximo_mes = datetime(ano + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        inicio_proximo_mes = datetime(ano, mes + 1, 1, tzinfo=timezone.utc)
+
+    resultado = colecao.delete_many({
+        "data_coleta": {
+            "$gte": inicio_mes.isoformat(),
+            "$lt": inicio_proximo_mes.isoformat(),
+        }
+    })
+
+    return {
+        "mensagem": "Registros do período removidos com sucesso.",
+        "mes": mes,
+        "ano": ano,
+        "registros_removidos": resultado.deleted_count,
+    }
 
 
 @app.get("/historico")
