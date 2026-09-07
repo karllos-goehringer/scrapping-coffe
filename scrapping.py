@@ -11,9 +11,23 @@ import certifi
 import math
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from contextlib import asynccontextmanager
 
+limiter = Limiter(key_func=get_remote_address)
 load_dotenv(override=True)
-app = FastAPI(title="API Cotações de Café Integrada")
+app = FastAPI(title="API Cotações de Café Integrada", middleware=[limiter.middleware])
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not scheduler.running:
+        scheduler.start()
+    yield  
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+app = FastAPI(lifespan=lifespan)
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo-db:27017/")
 cliente_mongo = MongoClient(MONGO_URI)
@@ -193,6 +207,7 @@ def index_response():
 
 
 @app.api_route("/coletar-cotacoes", methods=["GET", "POST"])
+@limiter.limit("5/minute")
 def coletar_cotacoes():
     resposta = _coletar_cotacoes_do_sites()
     resultado_insert = colecao.insert_one(resposta)
