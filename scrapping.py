@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 def _serializar_documento(documento):
     documento_serializado = dict(documento)
+    documento_serializado.pop("painel_do_cafe", None)
     documento_serializado["_id"] = str(documento_serializado.get("_id"))
     return documento_serializado
 
@@ -117,7 +118,6 @@ def _coletar_cotacoes_do_sites():
     resposta = {
         "data_coleta": datetime.now(timezone.utc).isoformat(),
         "cooabriel": None,
-        "painel_do_cafe": None,
         "cccv": None,
         "erros": []
     }
@@ -153,15 +153,6 @@ def _coletar_cotacoes_do_sites():
         if ultimo_registro and ultimo_registro.get("cooabriel"):
             resposta["cooabriel"] = ultimo_registro["cooabriel"]
             resposta["erros"].append("Cooabriel indisponível. Utilizando o último valor salvo no histórico.")
-
-    try:
-        url_painel = "https://api.coffee-panel.mitrix.online/api/home/information"
-        res_painel = requests.get(url_painel, headers=headers, timeout=10)
-        res_painel.raise_for_status()
-        dados_api = res_painel.json()
-        resposta["painel_do_cafe"] = dados_api.get("values", [])
-    except Exception as e:
-        resposta["erros"].append(f"Painel falhou: {str(e)}")
 
     try:
         resposta["cccv"] = _coletar_cccv(headers)
@@ -222,7 +213,6 @@ def obter_cotacoes():
         return {
             "data_coleta": None,
             "cooabriel": None,
-            "painel_do_cafe": None,
             "erros": ["Nenhuma cotação encontrada no histórico."],
         }
 
